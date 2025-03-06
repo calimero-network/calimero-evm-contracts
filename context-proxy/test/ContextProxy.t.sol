@@ -80,7 +80,7 @@ contract ContextProxyTest is Test {
         member3Address = vm.addr(member3PrivateKey);
 
         // Deploy context config contract
-        contextConfig = new ContextConfig(owner, address(this));
+        contextConfig = new ContextConfig(owner);
         
         // Set proxy code first
         bytes memory proxyBytecode = type(ContextProxy).creationCode;

@@ -15,6 +15,12 @@ https://book.getfoundry.sh/
 
 ## Usage
 
+### Install
+
+```shell
+$ forge install foundry-rs/forge-std --no-git
+```
+
 ### Build
 
 ```shell
