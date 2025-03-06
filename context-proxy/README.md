@@ -15,6 +15,13 @@ https://book.getfoundry.sh/
 
 ## Usage
 
+### Install mock dep
+
+```shell
+$ cd mock
+$ forge install foundry-rs/forge-std --no-git
+```
+
 ### Install
 
 ```shell
