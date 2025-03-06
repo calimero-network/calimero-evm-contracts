@@ -56,10 +56,6 @@ contract ContextConfig {
     error ProxyDeploymentFailed();
     error ProxyBytecodeNotSet();
 
-    event DebugLog(string message);
-    event DebugLogUint(string message, uint value);
-    event DebugLogBytes32(string message, bytes32 value);
-
     // Data structures
     struct Application {
         bytes32 id;
@@ -121,6 +117,17 @@ contract ContextConfig {
      */
     constructor(address _owner) {
         owner = _owner;
+    }
+
+    /**
+     * @dev Modifier to check if context exists
+     * @param contextId The context ID
+     */
+    modifier contextExists(bytes32 contextId) {
+        if (contexts[contextId].applicationGuard.revision == 0) {
+            revert ContextNotFound();
+        }
+        _;
     }
 
     /**
@@ -209,9 +216,11 @@ contract ContextConfig {
      * @return Whether the user is authorized
      */
     function isAuthorized(bytes32 userId, bytes32 contextId) internal view returns (bool) {
-        Context storage context = contexts[contextId];
-        for (uint i = 0; i < context.membersGuard.privileged.length; i++) {
-            if (context.membersGuard.privileged[i] == userId) {
+        bytes32[] storage privileged = contexts[contextId].membersGuard.privileged;
+        uint256 length = privileged.length;
+        
+        for (uint i = 0; i < length; i++) {
+            if (privileged[i] == userId) {
                 return true;
             }
         }
@@ -392,13 +401,16 @@ contract ContextConfig {
             revert Unauthorized();
         }
 
+        // Cache array length to save gas
+        uint256 membersLength = context.members.length;
+        
         // Add new members
         for (uint i = 0; i < newMembers.length; i++) {
             bytes32 newMember = newMembers[i];
             bool alreadyMember = false;
             
             // Check if already a member
-            for (uint j = 0; j < context.members.length; j++) {
+            for (uint j = 0; j < membersLength; j++) {
                 if (context.members[j] == newMember) {
                     alreadyMember = true;
                     break;
@@ -411,8 +423,10 @@ contract ContextConfig {
             }
         }
 
-        // Increment revision
-        context.membersGuard.revision++;
+        // Increment revision using unchecked to save gas
+        unchecked {
+            context.membersGuard.revision++;
+        }
         
         emit MembersAdded(contextId, newMembers);
         return true;
@@ -779,12 +793,8 @@ contract ContextConfig {
      * @param contextId The context ID
      * @return The application revision
      */
-    function applicationRevision(bytes32 contextId) external view returns (uint32) {
-        Context storage context = contexts[contextId];
-        if (context.applicationGuard.revision == 0) {
-            revert ContextNotFound();
-        }
-        return context.applicationGuard.revision;
+    function applicationRevision(bytes32 contextId) external view contextExists(contextId) returns (uint32) {
+        return contexts[contextId].applicationGuard.revision;
     }
 
     /**
@@ -792,12 +802,8 @@ contract ContextConfig {
      * @param contextId The context ID
      * @return The members revision
      */
-    function membersRevision(bytes32 contextId) external view returns (uint32) {
-        Context storage context = contexts[contextId];
-        if (context.applicationGuard.revision == 0) {
-            revert ContextNotFound();
-        }
-        return context.membersGuard.revision;
+    function membersRevision(bytes32 contextId) external view contextExists(contextId) returns (uint32) {
+        return contexts[contextId].membersGuard.revision;
     }
 
     /**
@@ -826,13 +832,8 @@ contract ContextConfig {
      * @param userId The user ID
      * @return The nonce
      */
-    function fetchNonce(bytes32 contextId, bytes32 userId) external view returns (uint64) {
-        Context storage context = contexts[contextId];
-        if (context.applicationGuard.revision == 0) {
-            revert ContextNotFound();
-        }
-        
-        return context.memberNonces[userId];
+    function fetchNonce(bytes32 contextId, bytes32 userId) external view contextExists(contextId) returns (uint64) {
+        return contexts[contextId].memberNonces[userId];
     }
 
     /**
@@ -899,15 +900,8 @@ contract ContextConfig {
      * @param contextId The context ID
      * @return The proxy contract address
      */
-    function proxyContract(bytes32 contextId) external view returns (address) {
-        console.logBytes32(contextId);
-        console.log("context application revision", contexts[contextId].applicationGuard.revision);
-
-        Context storage context = contexts[contextId];
-        if (context.applicationGuard.revision == 0) {
-            revert ContextNotFound();
-        }
-        return context.proxyAddress;
+    function proxyContract(bytes32 contextId) external view contextExists(contextId) returns (address) {
+        return contexts[contextId].proxyAddress;
     }
 
     /**
@@ -970,6 +964,13 @@ contract ContextConfig {
             revert ProxyDeploymentFailed();
         }
         
+        // Update the proxy address in storage       
+        unchecked {
+            context.proxyGuard.revision++;
+        }
+        
+        emit ProxyUpdated(contextId, proxyAddress);
+        emit ProxyDeployed(contextId, proxyAddress);
         return true;
     }
 } 
