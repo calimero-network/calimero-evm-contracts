@@ -124,27 +124,6 @@ contract ContextConfig {
     }
 
     /**
-     * @dev Get the message hash that needs to be signed
-     * @param request The request to hash
-     * @return The message hash
-     */
-    function getMessageHash(Request calldata request) public pure returns (bytes32) {
-        return keccak256(abi.encode(request));
-    }
-
-    /**
-     * @dev Get the Ethereum signed message hash
-     * @param messageHash The message hash
-     * @return The Ethereum signed message hash
-     */
-    function getEthSignedMessageHash(bytes32 messageHash) public pure returns (bytes32) {
-        return keccak256(abi.encodePacked(
-            "\x19Ethereum Signed Message:\n32",
-            messageHash
-        ));
-    }
-
-    /**
      * @dev Verify and authorize a request
      * @param request The request to verify
      * @param r The r value of the signature
@@ -160,52 +139,26 @@ contract ContextConfig {
     ) internal returns (bool) {
 
         bytes32 messageHash = keccak256(abi.encode(request));
-        // Add debug logs
-        console.log("=== Debug Signature Verification ===");
-        console.log("Input message hash:");
-        console.logBytes32(messageHash);
-        
-        // Calculate the Ethereum signed message hash manually for debugging
-        bytes32 manualEthHash = keccak256(abi.encodePacked(messageHash));
-        console.log("Manual Ethereum signed message hash:");
-        console.logBytes32(manualEthHash);
         
         // Get the Ethereum signed message hash using the function
-        bytes32 ethSignedMessageHash = getEthSignedMessageHash(messageHash);
-        console.log("Function Ethereum signed message hash:");
-        console.logBytes32(ethSignedMessageHash);
-        
-        // Verify they match
-        if (manualEthHash == ethSignedMessageHash) {
-            console.log("Manual and function hashes match");
-        } else {
-            console.log("Manual and function hashes DO NOT match");
-        }
-        
+        bytes32 ethSignedMessageHash = keccak256(abi.encodePacked(
+            "\x19Ethereum Signed Message:\n32",
+            messageHash
+        ));
+
         // Verify the signature using ECDSA key with ethSignedMessageHash
         address signer = ecrecover(ethSignedMessageHash, v, r, s);
-        console.log("Recovered signer address:");
-        console.log(signer);
         
         // Convert signer address to bytes32 for comparison
         bytes32 signerAsBytes32 = bytes32(uint256(uint160(signer)));
-        console.log("Recovered signer as bytes32:");
-        console.logBytes32(signerAsBytes32);
-        
-        console.log("Request signerId:");
-        console.logBytes32(request.signerId);
-        
+
         if (signer == address(0)) {
-            console.log("SIGNATURE VERIFICATION FAILED: Recovered address is zero");
             revert InvalidSignature();
         }
         
         if (signerAsBytes32 != request.signerId) {
-            console.log("SIGNATURE VERIFICATION FAILED: Recovered signer doesn't match signerId");
             revert InvalidSignature();
         }
-        
-        console.log("Signature verification passed!");
 
         // Check nonce to prevent replay attacks
         ContextRequest memory contextRequest = abi.decode(request.data, (ContextRequest));
@@ -271,15 +224,6 @@ contract ContextConfig {
      * @return Whether the request was successful
      */
     function mutate(SignedRequest calldata request) external returns (bool) {
-        emit DebugLog("mutate function called");
-
-        
-        // bytes32 messageHash = getMessageHash(request.payload);
-        // emit DebugLog("messageHash calculated");
-        
-        emit DebugLogUint("request.payload.kind", uint(request.payload.kind));
-
-        console.log("messageHash");
         
         if (!verifyAndAuthorize(
             request.payload,
@@ -290,48 +234,13 @@ contract ContextConfig {
             revert InvalidSignature();
         }
 
-        console.log("request.payload.kind");
-
         if (request.payload.kind == RequestKind.Context) {
-            console.log("request.payload.kind == RequestKind.Context");
             ContextRequest memory contextRequest = abi.decode(request.payload.data, (ContextRequest));
-            console.log("contextRequest.kind");
             if (contextRequest.kind == ContextRequestKind.Add) {
-                console.log("contextRequest.kind == ContextRequestKind.Add");
-    
-                // Log the data length and first bytes
-                console.log("contextRequest.data length:", contextRequest.data.length);
-                
-                // Log the first 64 bytes (or less if the data is shorter)
-                bytes memory dataPrefix = new bytes(contextRequest.data.length < 64 ? contextRequest.data.length : 64);
-                for (uint i = 0; i < dataPrefix.length; i++) {
-                    dataPrefix[i] = contextRequest.data[i];
-                }
-                console.log("First bytes of contextRequest.data:");
-                console.logBytes(dataPrefix);
-                
-                // Attempt to decode just the authorId first
-                bytes32 authorId;
-                bytes memory data = contextRequest.data;
-                assembly {
-                    // Load the first 32 bytes from the data
-                    authorId := mload(add(data, 0x20))
-                }
-                console.log("Extracted authorId (first 32 bytes):");
-                console.logBytes32(authorId);
-                
-                // Now try the full decode
                 (bytes32 decodedAuthorId, Application memory app) = abi.decode(
                     contextRequest.data,
                     (bytes32, Application)
                 );
-                
-                console.log("Decoding successful!");
-                console.log("Decoded authorId:");
-                console.logBytes32(decodedAuthorId);
-                console.log("contextRequest.contextId");
-                console.logBytes32(contextRequest.contextId);
-                
                 return addContext(decodedAuthorId, contextRequest.contextId, app);
             }
             else if (contextRequest.kind == ContextRequestKind.AddMembers) {
@@ -390,9 +299,7 @@ contract ContextConfig {
             }
         }
 
-        return false;
-
-        // revert InvalidRequest();
+        revert InvalidRequest();
     }
 
     /**
@@ -410,7 +317,6 @@ contract ContextConfig {
         if (contexts[contextId].applicationGuard.revision != 0) {
             revert ContextAlreadyExists();
         }
-        console.log("addContext");
 
         // Initialize guards with Ed25519 public key (authorId)
         bytes32[] memory privilegedMembers = new bytes32[](1);
@@ -430,15 +336,11 @@ contract ContextConfig {
             revert ProxyBytecodeNotSet();
         }
 
-        console.log("deployProxy");
-
         // Deploy proxy contract
         address proxyAddress = deployProxy(contextId);
         if (proxyAddress == address(0)) {
             revert ProxyDeploymentFailed();
         }
-
-        console.log("assignFields");
 
         // Assign fields individually
         Context storage newContext = contexts[contextId];
@@ -449,8 +351,6 @@ contract ContextConfig {
         newContext.proxyGuard = guard;
         newContext.proxyAddress = proxyAddress;
         newContext.memberNonces[authorId] = 0;
-
-        console.log("emitContextCreated");
 
         emit ContextCreated(contextId, authorId);
         return true;
@@ -1000,14 +900,13 @@ contract ContextConfig {
      * @return The proxy contract address
      */
     function proxyContract(bytes32 contextId) external view returns (address) {
-        Context storage context = contexts[contextId];
-        console.log("context.applicationGuard.revision", context.applicationGuard.revision);
-        console.log("context.proxyAddress", context.proxyAddress);
         console.logBytes32(contextId);
+        console.log("context application revision", contexts[contextId].applicationGuard.revision);
+
+        Context storage context = contexts[contextId];
         if (context.applicationGuard.revision == 0) {
             revert ContextNotFound();
         }
-        console.log("context.proxyAddress", context.proxyAddress);
         return context.proxyAddress;
     }
 
@@ -1071,18 +970,6 @@ contract ContextConfig {
             revert ProxyDeploymentFailed();
         }
         
-        return true;
-    }
-
-    // Add this simple test function to your contract
-    function testLog() external {
-        emit DebugLog("This is a test log");
-        emit DebugLogUint("A number", 42);
-        emit DebugLogBytes32("A bytes32", bytes32(uint256(123)));
-    }
-
-    function testSignedRequest(SignedRequest calldata request) external returns (bool) {
-        emit DebugLog("testSignedRequest called");
         return true;
     }
 } 
