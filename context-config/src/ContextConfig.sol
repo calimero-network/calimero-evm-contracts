@@ -41,7 +41,6 @@ contract ContextConfig {
     event ProxyUpdated(bytes32 indexed contextId, address proxyAddress);
     event CapabilityAdded(bytes32 indexed contextId, bytes32 memberId, Capability capability);
     event CapabilityRevoked(bytes32 indexed contextId, bytes32 memberId, Capability capability);
-    event LogAuthorizationCheck(bytes32 contextId, address signer, bool hasCapability);
     event ProxyDeployed(bytes32 indexed contextId, address proxyAddress);
     event ProxyCodeUpdated(bytes32 newCodeHash);
 
@@ -144,10 +143,10 @@ contract ContextConfig {
         bytes32 s,
         uint8 v
     ) internal returns (bool) {
-
+        // Verify signature
         bytes32 messageHash = keccak256(abi.encode(request));
         
-        // Get the Ethereum signed message hash using the function
+        // Get the Ethereum signed message hash
         bytes32 ethSignedMessageHash = keccak256(abi.encodePacked(
             "\x19Ethereum Signed Message:\n32",
             messageHash
@@ -159,15 +158,11 @@ contract ContextConfig {
         // Convert signer address to bytes32 for comparison
         bytes32 signerAsBytes32 = bytes32(uint256(uint160(signer)));
 
-        if (signer == address(0)) {
+        if (signer == address(0) || signerAsBytes32 != request.signerId) {
             revert InvalidSignature();
         }
         
-        if (signerAsBytes32 != request.signerId) {
-            revert InvalidSignature();
-        }
-
-        // Check nonce to prevent replay attacks
+        // Decode context request once to avoid multiple decoding operations
         ContextRequest memory contextRequest = abi.decode(request.data, (ContextRequest));
         
         // For initial context creation, we don't need to check authorization
@@ -175,30 +170,33 @@ contract ContextConfig {
             return true;
         }
 
+        // Get context and check if it exists
         Context storage context = contexts[contextRequest.contextId];
         if (context.applicationGuard.revision == 0) {
             revert ContextNotFound();
         }
 
-        // Check if nonce is valid (except for context creation)
-        if (context.memberNonces[request.userId] >= request.nonce) {
+        // Check if nonce is valid
+        uint64 currentNonce = context.memberNonces[request.userId];
+        if (currentNonce >= request.nonce) {
             revert InvalidNonce();
         }
         
         // Update nonce
         context.memberNonces[request.userId] = request.nonce;
 
-        // For capability management, check if user is authorized (is in membersGuard)
-        if (contextRequest.kind == ContextRequestKind.AddCapability ||
-            contextRequest.kind == ContextRequestKind.RevokeCapability) {
+        // Handle different request types
+        ContextRequestKind kind = contextRequest.kind;
+        
+        // For capability management, check if user is authorized
+        if (kind == ContextRequestKind.AddCapability || kind == ContextRequestKind.RevokeCapability) {
             return isAuthorized(request.userId, contextRequest.contextId);
         }
 
         // For member management operations, check ManageMembers capability
-        if (contextRequest.kind == ContextRequestKind.AddMembers ||
-            contextRequest.kind == ContextRequestKind.RemoveMembers) {
+        if (kind == ContextRequestKind.AddMembers || kind == ContextRequestKind.RemoveMembers) {
             bool hasCap = hasCapability(request.userId, contextRequest.contextId, Capability.ManageMembers);
-            emit LogAuthorizationCheck(contextRequest.contextId, signer, hasCap);
+
             if (!hasCap) {
                 revert Unauthorized();
             }
@@ -256,7 +254,6 @@ contract ContextConfig {
                 bytes32[] memory newMembers = abi.decode(contextRequest.data, (bytes32[]));
                 return addMembers(
                     contextRequest.contextId,
-                    request.payload.userId,
                     newMembers
                 );
             }
@@ -264,7 +261,6 @@ contract ContextConfig {
                 bytes32[] memory membersToRemove = abi.decode(contextRequest.data, (bytes32[]));
                 return removeMembers(
                     contextRequest.contextId,
-                    request.payload.userId,
                     membersToRemove
                 );
             }
@@ -275,7 +271,6 @@ contract ContextConfig {
                 );
                 return addCapability(
                     contextRequest.contextId,
-                    request.payload.userId,
                     memberId,
                     capability
                 );
@@ -287,22 +282,19 @@ contract ContextConfig {
                 );
                 return revokeCapability(
                     contextRequest.contextId,
-                    request.payload.userId,
                     memberId,
                     capability
                 );
             }
             else if (contextRequest.kind == ContextRequestKind.UpdateProxy) {
                 return updateProxy(
-                    contextRequest.contextId,
-                    request.payload.userId
+                    contextRequest.contextId
                 );
             }
             else if (contextRequest.kind == ContextRequestKind.UpdateApplication) {
                 Application memory newApp = abi.decode(contextRequest.data, (Application));
                 return updateApplication(
                     contextRequest.contextId,
-                    request.payload.userId,
                     newApp
                 );
             }
@@ -383,24 +375,15 @@ contract ContextConfig {
     /**
      * @dev Add members to a context
      * @param contextId The context ID
-     * @param signerId The signer ID
      * @param newMembers The new members
      * @return Whether the members were added
      */
     function addMembers(
         bytes32 contextId,
-        bytes32 signerId,
         bytes32[] memory newMembers
     ) internal returns (bool) {
         Context storage context = contexts[contextId];
-        if (context.applicationGuard.revision == 0) {
-            revert ContextNotFound();
-        }
-
-        if (!hasCapability(signerId, contextId, Capability.ManageMembers)) {
-            revert Unauthorized();
-        }
-
+        
         // Cache array length to save gas
         uint256 membersLength = context.members.length;
         
@@ -435,23 +418,14 @@ contract ContextConfig {
     /**
      * @dev Remove members from a context
      * @param contextId The context ID
-     * @param signerId The signer ID
      * @param membersToRemove The members to remove
      * @return Whether the members were removed
      */
     function removeMembers(
         bytes32 contextId,
-        bytes32 signerId,
         bytes32[] memory membersToRemove
     ) internal returns (bool) {
         Context storage context = contexts[contextId];
-        if (context.applicationGuard.revision == 0) {
-            revert ContextNotFound();
-        }
-
-        if (!hasCapability(signerId, contextId, Capability.ManageMembers)) {
-            revert Unauthorized();
-        }
 
         // Remove members
         for (uint i = 0; i < membersToRemove.length; i++) {
@@ -471,8 +445,10 @@ contract ContextConfig {
             }
         }
 
-        // Increment revision
-        context.membersGuard.revision++;
+        // Increment revision using unchecked to save gas
+        unchecked {
+            context.membersGuard.revision++;
+        }
         
         emit MembersRemoved(contextId, membersToRemove);
         return true;
@@ -546,37 +522,27 @@ contract ContextConfig {
     /**
      * @dev Add a capability to a user
      * @param contextId The context ID
-     * @param signerId The signer ID
      * @param memberId The member ID
      * @param capability The capability
      * @return Whether the capability was added
      */
     function addCapability(
         bytes32 contextId,
-        bytes32 signerId,
         bytes32 memberId,
         Capability capability
     ) internal returns (bool) {
         Context storage context = contexts[contextId];
-        if (context.applicationGuard.revision == 0) {
-            revert ContextNotFound();
-        }
-
-        // Check if signer has the capability they're trying to grant
-        if (!hasCapability(signerId, contextId, capability)) {
-            revert Unauthorized();
-        }
 
         // Add capability
         if (capability == Capability.ManageApplication) {
             context.applicationGuard.privileged.push(memberId);
-            context.applicationGuard.revision++;
+            unchecked { context.applicationGuard.revision++; }
         } else if (capability == Capability.ManageMembers) {
             context.membersGuard.privileged.push(memberId);
-            context.membersGuard.revision++;
+            unchecked { context.membersGuard.revision++; }
         } else if (capability == Capability.Proxy) {
             context.proxyGuard.privileged.push(memberId);
-            context.proxyGuard.revision++;
+            unchecked { context.proxyGuard.revision++; }
         }
 
         emit CapabilityAdded(contextId, memberId, capability);
@@ -586,35 +552,28 @@ contract ContextConfig {
     /**
      * @dev Revoke a capability from a user
      * @param contextId The context ID
-     * @param signerId The signer ID
      * @param memberId The member ID
      * @param capability The capability
      * @return Whether the capability was revoked
      */
     function revokeCapability(
         bytes32 contextId,
-        bytes32 signerId,
         bytes32 memberId,
         Capability capability
     ) internal returns (bool) {
         Context storage context = contexts[contextId];
-        if (context.applicationGuard.revision == 0) {
-            revert ContextNotFound();
-        }
-
-        // Check if signer has the capability they're trying to revoke
-        if (!hasCapability(signerId, contextId, capability)) {
-            revert Unauthorized();
-        }
 
         // Remove capability
         bytes32[] storage privileged;
         if (capability == Capability.ManageApplication) {
             privileged = context.applicationGuard.privileged;
+            unchecked { context.applicationGuard.revision++; }
         } else if (capability == Capability.ManageMembers) {
             privileged = context.membersGuard.privileged;
+            unchecked { context.membersGuard.revision++; }
         } else if (capability == Capability.Proxy) {
             privileged = context.proxyGuard.privileged;
+            unchecked { context.proxyGuard.revision++; }
         } else {
             revert InvalidRequest();
         }
@@ -907,27 +866,17 @@ contract ContextConfig {
     /**
      * @dev Update the application for a context
      * @param contextId The context ID
-     * @param userId The user ID making the request
      * @param app The new application
      * @return Whether the operation was successful
      */
     function updateApplication(
         bytes32 contextId,
-        bytes32 userId,
         Application memory app
     ) internal returns (bool) {
         Context storage context = contexts[contextId];
-        if (context.applicationGuard.revision == 0) {
-            revert ContextNotFound();
-        }
-        
-        // Check if user has ManageApplication capability
-        if (!hasCapability(userId, contextId, Capability.ManageApplication)) {
-            revert Unauthorized();
-        }
         
         context.application = app;
-        context.applicationGuard.revision++;
+        unchecked { context.applicationGuard.revision++; }
         
         emit ApplicationUpdated(contextId);
         return true;
@@ -936,35 +885,25 @@ contract ContextConfig {
     /**
      * @dev Update the proxy for a context
      * @param contextId The context ID
-     * @param userId The user ID
      * @return Whether the operation was successful
      */
     function updateProxy(
-        bytes32 contextId,
-        bytes32 userId
+        bytes32 contextId
     ) internal returns (bool) {
         Context storage context = contexts[contextId];
-        if (context.applicationGuard.revision == 0) {
-            revert ContextNotFound();
-        }
         
-        // Check if user has Proxy capability
-        if (!hasCapability(userId, contextId, Capability.Proxy)) {
-            revert Unauthorized();
-        }
-        
-        // Deploy a new proxy (this will replace the existing one if any)
         if (proxyBytecode.length == 0) {
             revert ProxyBytecodeNotSet();
         }
         
-        // If there's an existing proxy, we'll redeploy and update the address
         address proxyAddress = deployProxy(contextId);
         if (proxyAddress == address(0)) {
             revert ProxyDeploymentFailed();
         }
         
-        // Update the proxy address in storage       
+        // Update the proxy address in storage
+        context.proxyAddress = proxyAddress;
+        
         unchecked {
             context.proxyGuard.revision++;
         }
