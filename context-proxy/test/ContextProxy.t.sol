@@ -148,8 +148,11 @@ contract ContextProxyTest is Test {
             data: abi.encode(contextRequest)
         });
 
-        bytes32 messageHash = contextConfig.getMessageHash(request);
-        bytes32 ethSignedMessageHash = contextConfig.getEthSignedMessageHash(messageHash);
+        bytes32 messageHash = keccak256(abi.encode(request));
+        bytes32 ethSignedMessageHash = keccak256(abi.encodePacked(
+            "\x19Ethereum Signed Message:\n32",
+            messageHash
+        ));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(ecdsaPrivateKey, ethSignedMessageHash);
 
         ContextConfig.SignedRequest memory signedRequest = ContextConfig.SignedRequest({
@@ -191,8 +194,11 @@ contract ContextProxyTest is Test {
         });
         
         // Create signed request
-        bytes32 messageHash = contextConfig.getMessageHash(request);
-        bytes32 ethSignedMessageHash = contextConfig.getEthSignedMessageHash(messageHash);
+        bytes32 messageHash = keccak256(abi.encode(request));
+        bytes32 ethSignedMessageHash = keccak256(abi.encodePacked(
+            "\x19Ethereum Signed Message:\n32",
+            messageHash
+        ));
         
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(_authorPrivateKey, ethSignedMessageHash);
         
@@ -752,8 +758,11 @@ contract ContextProxyTest is Test {
             data: abi.encode(contextRequest)
         });
 
-        bytes32 messageHash = contextConfig.getMessageHash(request);
-        bytes32 ethSignedMessageHash = contextConfig.getEthSignedMessageHash(messageHash);
+        bytes32 messageHash = keccak256(abi.encode(request));
+        bytes32 ethSignedMessageHash = keccak256(abi.encodePacked(
+            "\x19Ethereum Signed Message:\n32",
+            messageHash
+        ));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(contextAuthorPrivateKey, ethSignedMessageHash);
 
         ContextConfig.SignedRequest memory signedRequest = ContextConfig.SignedRequest({
