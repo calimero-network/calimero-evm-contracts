@@ -241,13 +241,124 @@ contract ContextConfig {
             revert InvalidSignature();
         }
 
+        console.log("passed verifyAndAuthorize");
+
         if (request.payload.kind == RequestKind.Context) {
+            console.log("passed request.payload.kind == RequestKind.Context");
             ContextRequest memory contextRequest = abi.decode(request.payload.data, (ContextRequest));
+            console.log("passed abi.decode(request.payload.data, (ContextRequest))");
             if (contextRequest.kind == ContextRequestKind.Add) {
-                (bytes32 decodedAuthorId, Application memory app) = abi.decode(
-                    contextRequest.data,
-                    (bytes32, Application)
-                );
+                console.log("passed contextRequest.kind == ContextRequestKind.Add");
+                
+                // Get the data bytes
+                bytes memory data = contextRequest.data;
+                console.log("data length: %d", data.length);
+                
+                // Log the raw data bytes without using slices
+                // We'll log individual bytes in chunks
+                if (data.length >= 32) {
+                    bytes32 chunk1;
+                    assembly {
+                        // Load 32 bytes from memory - need to add 32 to skip the length field
+                        chunk1 := mload(add(data, 32))
+                    }
+                    console.log("First 32 bytes:");
+                    console.logBytes32(chunk1);
+                }
+                
+                if (data.length >= 64) {
+                    bytes32 chunk2;
+                    assembly {
+                        // Load next 32 bytes
+                        chunk2 := mload(add(data, 64))
+                    }
+                    console.log("Next 32 bytes:");
+                    console.logBytes32(chunk2);
+                }
+                
+                if (data.length >= 96) {
+                    bytes32 chunk3;
+                    assembly {
+                        // Load next 32 bytes
+                        chunk3 := mload(add(data, 96))
+                    }
+                    console.log("Next 32 bytes:");
+                    console.logBytes32(chunk3);
+                }
+                
+                console.log("About to decode (bytes32, Application)");
+                
+                // MODIFIED: Check if the first 32 bytes are a pointer (0x20)
+                bytes32 firstWord;
+                assembly {
+                    firstWord := mload(add(data, 32))
+                }
+                
+                bytes memory actualData;
+                bytes32 decodedAuthorId;
+                Application memory app;
+                
+                if (firstWord == 0x0000000000000000000000000000000000000000000000000000000000000020) {
+                    console.log("Detected pointer at start of data, skipping first 32 bytes");
+                    // Skip the first 32 bytes (the pointer) and use the rest
+                    actualData = new bytes(data.length - 32);
+                    for (uint i = 0; i < data.length - 32; i++) {
+                        actualData[i] = data[i + 32];
+                    }
+                    
+                    // Attempt the decode on the adjusted data
+                    (decodedAuthorId, app) = abi.decode(
+                        actualData,
+                        (bytes32, Application)
+                    );
+                } else {
+                    // Use the original data
+                    (decodedAuthorId, app) = abi.decode(
+                        data,
+                        (bytes32, Application)
+                    );
+                }
+                
+                // If we get here, decoding was successful
+                console.log("Decode successful");
+                console.log("authorId:");
+                console.logBytes32(decodedAuthorId);
+                console.log("app.id:");
+                console.logBytes32(app.id);
+                console.log("app.blob:");
+                console.logBytes32(app.blob);
+                console.log("app.size:");
+                console.log(app.size);
+                console.log("app.source:");
+                console.log(app.source);
+                console.log("app.metadata:");
+                console.logBytes(app.metadata);
+                
+                // Log if any bytes in app.id are non-zero
+                bool hasNonZeroId = false;
+                for (uint i = 0; i < 32; i++) {
+                    if (app.id[i] != 0) {
+                        hasNonZeroId = true;
+                        console.log("app.id has non-zero byte at position %d: %d", i, uint8(app.id[i]));
+                    }
+                }
+                if (!hasNonZeroId) {
+                    console.log("All bytes in app.id are zero");
+                }
+                
+                // Log if any bytes in app.blob are non-zero
+                bool hasNonZeroBlob = false;
+                for (uint i = 0; i < 32; i++) {
+                    if (app.blob[i] != 0) {
+                        hasNonZeroBlob = true;
+                        console.log("app.blob has non-zero byte at position %d: %d", i, uint8(app.blob[i]));
+                    }
+                }
+                if (!hasNonZeroBlob) {
+                    console.log("All bytes in app.blob are zero");
+                }
+                
+                console.log("passed (bytes32 decodedAuthorId, Application memory app)");
                 return addContext(decodedAuthorId, contextRequest.contextId, app);
             }
             else if (contextRequest.kind == ContextRequestKind.AddMembers) {
