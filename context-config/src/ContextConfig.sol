@@ -123,6 +123,7 @@ contract ContextConfig {
      * @param contextId The context ID
      */
     modifier contextExists(bytes32 contextId) {
+        console.log("contexts[contextId].applicationGuard.revision: %d", contexts[contextId].applicationGuard.revision);
         if (contexts[contextId].applicationGuard.revision == 0) {
             revert ContextNotFound();
         }
@@ -164,24 +165,30 @@ contract ContextConfig {
         
         // Decode context request once to avoid multiple decoding operations
         ContextRequest memory contextRequest = abi.decode(request.data, (ContextRequest));
+        console.log("contextRequest.kind: %d", uint8(contextRequest.kind));
         
         // For initial context creation, we don't need to check authorization
         if (contextRequest.kind == ContextRequestKind.Add) {
             return true;
         }
 
+        console.log("contextRequest.contextId:");
+        console.logBytes32(contextRequest.contextId);
         // Get context and check if it exists
         Context storage context = contexts[contextRequest.contextId];
+        console.log("context.applicationGuard.revision: %d", context.applicationGuard.revision);
         if (context.applicationGuard.revision == 0) {
             revert ContextNotFound();
         }
-
+        console.log("passed context.applicationGuard.revision == 0");
         // Check if nonce is valid
         uint64 currentNonce = context.memberNonces[request.userId];
-        if (currentNonce >= request.nonce) {
+        console.log("currentNonce: %d", currentNonce);
+        console.log("request.nonce: %d", request.nonce);
+        if (currentNonce != request.nonce) {
             revert InvalidNonce();
         }
-        
+        console.log("passed currentNonce >= request.nonce");
         // Update nonce
         context.memberNonces[request.userId] = request.nonce;
 
@@ -333,6 +340,8 @@ contract ContextConfig {
                 console.log(app.source);
                 console.log("app.metadata:");
                 console.logBytes(app.metadata);
+                console.log("contextRequest.contextId:");
+                console.logBytes32(contextRequest.contextId);
                 
                 // Log if any bytes in app.id are non-zero
                 bool hasNonZeroId = false;
@@ -362,7 +371,9 @@ contract ContextConfig {
                 return addContext(decodedAuthorId, contextRequest.contextId, app);
             }
             else if (contextRequest.kind == ContextRequestKind.AddMembers) {
+                console.log("passed contextRequest.kind == ContextRequestKind.AddMembers");
                 bytes32[] memory newMembers = abi.decode(contextRequest.data, (bytes32[]));
+
                 return addMembers(
                     contextRequest.contextId,
                     newMembers
@@ -580,6 +591,11 @@ contract ContextConfig {
         Context storage context = contexts[contextId];
         if (context.applicationGuard.revision == 0) {
             revert ContextNotFound();
+        }
+
+        // If there are no members or offset is beyond array length, return empty array
+        if (context.members.length == 0 || offset >= context.members.length) {
+            return new bytes32[](0);
         }
 
         uint256 available = context.members.length - offset;
