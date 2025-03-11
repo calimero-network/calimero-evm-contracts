@@ -220,7 +220,7 @@ contract ContextProxyTest is Test {
         bytes32 userId,  // This will be Ed25519 ID
         bytes memory requestData,
         ContextProxy.RequestKind kind
-    ) internal view returns (ContextProxy.SignedRequest memory) {
+    ) internal pure returns (ContextProxy.SignedRequest memory) {
         // Get ECDSA public key from private key
         address signerAddress = vm.addr(privateKey);
         bytes32 signerId = bytes32(uint256(uint160(signerAddress)));
@@ -232,8 +232,11 @@ contract ContextProxyTest is Test {
             data: requestData
         });
         
-        bytes32 messageHash = proxy.getMessageHash(request);
-        bytes32 ethSignedMessageHash = proxy.getEthSignedMessageHash(messageHash);
+        bytes32 messageHash = keccak256(abi.encode(request));
+        bytes32 ethSignedMessageHash = keccak256(abi.encodePacked(
+            "\x19Ethereum Signed Message:\n32",
+            messageHash
+        ));
         
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, ethSignedMessageHash);
         
@@ -473,7 +476,7 @@ contract ContextProxyTest is Test {
         });
         
         // Member1 submits proposal
-        ContextProxy.ProposalWithApprovals memory result = submitProposal(
+        submitProposal(
             proposalId,
             member1Id,
             member1PrivateKey,
@@ -582,15 +585,15 @@ contract ContextProxyTest is Test {
         
         // Test pagination
         // Get first 2 entries
-        (bytes[] memory paginatedKeys1, bytes[] memory paginatedValues1) = proxy.contextStorageEntries(0, 2);
+        (bytes[] memory paginatedKeys1,) = proxy.contextStorageEntries(0, 2);
         assertEq(paginatedKeys1.length, 2, "Should return 2 entries");
         
         // Get remaining entry
-        (bytes[] memory paginatedKeys2, bytes[] memory paginatedValues2) = proxy.contextStorageEntries(2, 1);
+        (bytes[] memory paginatedKeys2,) = proxy.contextStorageEntries(2, 1);
         assertEq(paginatedKeys2.length, 1, "Should return 1 entry");
         
         // Try to get entries beyond the end
-        (bytes[] memory paginatedKeys3, bytes[] memory paginatedValues3) = proxy.contextStorageEntries(3, 1);
+        (bytes[] memory paginatedKeys3,) = proxy.contextStorageEntries(3, 1);
         assertEq(paginatedKeys3.length, 0, "Should return empty array");
     }
 

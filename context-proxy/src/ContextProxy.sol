@@ -92,6 +92,7 @@ contract ContextProxy {
     error ProposalNotFound();
     error ProposalAlreadyApproved();
     error InsufficientBalance();
+    error InvalidSignature();
 
     // Storage slot for implementation address (follows EIP-1967)
     bytes32 private constant IMPLEMENTATION_SLOT = 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
@@ -107,49 +108,7 @@ contract ContextProxy {
         numApprovals = 3;
         activeProposalsLimit = 10;
     }
-
-    // Helper function to get the message hash that needs to be signed
-    function getMessageHash(Request calldata request) public pure returns (bytes32) {
-        return keccak256(abi.encode(
-            request.signerId,
-            request.userId,
-            request.kind,
-            request.data
-        ));
-    }
-
-    // Helper function to get the Ethereum signed message hash
-    function getEthSignedMessageHash(bytes32 messageHash) public pure returns (bytes32) {
-        return keccak256(abi.encodePacked(
-            "\x19Ethereum Signed Message:\n32",
-            messageHash
-        ));
-    }
-    
-    // Verify the signature and check authorization
-    function verifyAndAuthorize(
-        bytes32 messageHash,
-        bytes32 r,
-        bytes32 s,
-        uint8 v,
-        Request memory request
-    ) internal returns (bool) {
-        // First get the Ethereum signed message hash
-        bytes32 ethSignedMessageHash = getEthSignedMessageHash(messageHash);
-        
-        // Verify the signature using ECDSA key with ethSignedMessageHash
-        address signer = ecrecover(ethSignedMessageHash, v, r, s);
-        require(signer != address(0), "Invalid signature");
-        require(bytes32(uint256(uint160(signer))) == request.signerId, "Invalid signer");
-        
-        // Check if user is a member of the context
-        if (!isMember(request.userId)) {
-            return false;
-        }
-        
-        return true;
-    }
-
+ 
     /**
      * @dev Processes a signed mutation request for the proxy contract
      * @param signedRequest The signed request containing the mutation action
@@ -158,18 +117,30 @@ contract ContextProxy {
     function mutate(
         SignedRequest calldata signedRequest
     ) external returns (ProposalWithApprovals memory) {
-        // Verify signature and get the payload
-        bytes32 messageHash = getMessageHash(signedRequest.payload);
+        // Verify signature and authorization
+        bytes32 messageHash = keccak256(abi.encode(signedRequest.payload));
         
-        if (!verifyAndAuthorize(
-            messageHash,
-            signedRequest.r,
-            signedRequest.s,
-            signedRequest.v,
-            signedRequest.payload
-        )) {
+        // Get the Ethereum signed message hash
+        bytes32 ethSignedMessageHash = keccak256(abi.encodePacked(
+            "\x19Ethereum Signed Message:\n32",
+            messageHash
+        ));
+
+        // Verify the signature using ECDSA key with ethSignedMessageHash
+        address signer = ecrecover(ethSignedMessageHash, signedRequest.v, signedRequest.r, signedRequest.s);
+        
+        // Convert signer address to bytes32 for comparison
+        bytes32 signerAsBytes32 = bytes32(uint256(uint160(signer)));
+
+        if (signer == address(0) || signerAsBytes32 != signedRequest.payload.signerId) {
+            revert InvalidSignature();
+        }
+
+        // Check if user is a member
+        if (!isMember(signedRequest.payload.userId)) {
             revert Unauthorized();
         }
+
         // Process based on request kind
         if (signedRequest.payload.kind == RequestKind.Propose) {
             Proposal memory proposal = abi.decode(signedRequest.payload.data, (Proposal));
@@ -313,7 +284,7 @@ contract ContextProxy {
      */
     function validateProposalAction(ProposalAction memory action) internal pure {
         if (action.kind == ProposalActionKind.ExternalFunctionCall) {
-            (address target, bytes memory callData, uint256 value) = abi.decode(
+            (address target, bytes memory callData,) = abi.decode(
                 action.data,
                 (address, bytes, uint256)
             );
@@ -372,8 +343,11 @@ contract ContextProxy {
             revert ProposalNotFound();
         }
 
+        // Cache the actions array length
+        uint256 actionsLength = proposal.actions.length;
+
         // Execute each action
-        for (uint i = 0; i < proposal.actions.length; i++) {
+        for (uint i = 0; i < actionsLength; i++) {
             ProposalAction memory action = proposal.actions[i];
             
             if (action.kind == ProposalActionKind.ExternalFunctionCall) {
@@ -393,8 +367,11 @@ contract ContextProxy {
             else if (action.kind == ProposalActionKind.Transfer) {
                 (address recipient, uint256 amount) = abi.decode(action.data, (address, uint256));
                 
-                // Transfer tokens
-                (bool success, ) = recipient.call{value: amount}("");
+                // Transfer tokens using unchecked for gas optimization
+                bool success;
+                unchecked {
+                    (success, ) = recipient.call{value: amount}("");
+                }
                 if (!success) {
                     revert InsufficientBalance();
                 }
@@ -417,13 +394,11 @@ contract ContextProxy {
             } 
             else if (action.kind == ProposalActionKind.SetContextValue) {
                 (bytes memory key, bytes memory value) = abi.decode(action.data, (bytes, bytes));
-
                 bool keyExists = contextStorage[key].length > 0;
                 
                 if (!keyExists) {
                     contextStorageKeys.push(key);
                 }
-
                 contextStorage[key] = value;
                 
                 emit ContextValueSet(key, value);
@@ -462,20 +437,19 @@ contract ContextProxy {
     }
 
     /**
-     * @dev Returns a paginated list of active proposals
-     * @param fromIndex Starting index for pagination
-     * @param limit Maximum number of proposals to return
+     * @dev Returns a paginated list of active proposals with gas optimization
      */
     function getProposals(uint32 fromIndex, uint32 limit) external view returns (Proposal[] memory) {
-        // Count total proposals
+        // Count total proposals with a fixed upper bound
         uint32 totalProposals = 0;
-        bytes32[] memory proposalIds = new bytes32[](100); // Temporary array with arbitrary size
+        bytes32[] memory proposalIds = new bytes32[](100); // Fixed size temporary array
         
-        for (uint i = 0; i < proposalIds.length && totalProposals < 100; i++) {
-            bytes32 proposalId = keccak256(abi.encodePacked(i));
-            if (proposals[proposalId].id == proposalId) {
-                proposalIds[totalProposals] = proposalId;
-                totalProposals++;
+        unchecked {
+            for (uint i = 0; i < 100 && totalProposals < 100; i++) {
+                bytes32 proposalId = keccak256(abi.encodePacked(i));
+                if (proposals[proposalId].id == proposalId) {
+                    proposalIds[totalProposals++] = proposalId;
+                }
             }
         }
         
@@ -486,8 +460,10 @@ contract ContextProxy {
         }
         
         Proposal[] memory result = new Proposal[](resultSize);
-        for (uint32 i = 0; i < resultSize; i++) {
-            result[i] = proposals[proposalIds[fromIndex + i]];
+        unchecked {
+            for (uint32 i = 0; i < resultSize; i++) {
+                result[i] = proposals[proposalIds[fromIndex + i]];
+            }
         }
         
         return result;
