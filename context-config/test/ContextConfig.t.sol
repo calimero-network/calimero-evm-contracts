@@ -111,9 +111,17 @@ contract ContextConfigTest is Test {
     function createSignedRequest (
         bytes32 contextId,
         bytes32 authorId,
-        ContextConfig.Application memory app,
-        uint64 nonce
+        ContextConfig.Application memory app
     ) internal view returns (ContextConfig.SignedRequest memory) {
+
+
+        uint64 nonce;
+        try config.fetchNonce(contextId, authorId) returns (uint64 currentNonce) {
+            nonce = currentNonce;
+        } catch {
+            nonce = 1;
+        }
+
         ContextConfig.ContextRequest memory contextRequest = ContextConfig.ContextRequest({
             contextId: contextId,
             kind: ContextConfig.ContextRequestKind.Add,
@@ -151,8 +159,7 @@ contract ContextConfigTest is Test {
         ContextConfig.SignedRequest memory createRequest = createSignedRequest(
             contextId,
             ed25519PublicKey,
-            app,
-            1
+            app
         );
 
         bool success = config.mutate(createRequest);
@@ -165,8 +172,7 @@ contract ContextConfigTest is Test {
 
         ContextConfig.SignedRequest memory addRequest = createAddMembersRequest(
             contextId,
-            newMembers,
-            2
+            newMembers
         );
 
         success = config.mutate(addRequest);
@@ -182,8 +188,7 @@ contract ContextConfigTest is Test {
 
         ContextConfig.SignedRequest memory removeRequest = createRemoveMembersRequest(
             contextId,
-            membersToRemove,
-            3
+            membersToRemove
         );
 
         success = config.mutate(removeRequest);
@@ -220,11 +225,19 @@ contract ContextConfigTest is Test {
         });
     }
 
+    // Helper function for creating add members request
     function createAddMembersRequest(
         bytes32 contextId,
-        bytes32[] memory newMembers,
-        uint64 nonce
+        bytes32[] memory newMembers
     ) internal view returns (ContextConfig.SignedRequest memory) {
+
+        uint64 nonce;
+        try config.fetchNonce(contextId, ed25519PublicKey) returns (uint64 currentNonce) {
+            nonce = currentNonce;
+        } catch {
+            nonce = 1;
+        }
+
         ContextConfig.ContextRequest memory addMembersRequest = ContextConfig.ContextRequest({
             contextId: contextId,
             kind: ContextConfig.ContextRequestKind.AddMembers,
@@ -257,9 +270,16 @@ contract ContextConfigTest is Test {
     // Helper function for creating remove members request
     function createRemoveMembersRequest(
         bytes32 contextId,
-        bytes32[] memory membersToRemove,
-        uint64 nonce
+        bytes32[] memory membersToRemove
     ) internal view returns (ContextConfig.SignedRequest memory) {
+
+        uint64 nonce;
+        try config.fetchNonce(contextId, ed25519PublicKey) returns (uint64 currentNonce) {
+            nonce = currentNonce;
+        } catch {
+            nonce = 1;
+        }
+
         ContextConfig.ContextRequest memory removeMembersRequest = ContextConfig.ContextRequest({
             contextId: contextId,
             kind: ContextConfig.ContextRequestKind.RemoveMembers,
@@ -289,15 +309,22 @@ contract ContextConfigTest is Test {
         });
     }
 
+    // Helper function for creating signed context request
     function createSignedContextRequest(
         bytes32 contextId,
         ContextConfig.ContextRequestKind kind,
         bytes memory data,
         bytes32 userId,
         bytes32 signerId,
-        uint256 signerPrivateKey,
-        uint256 nonce
+        uint256 signerPrivateKey
     ) internal view returns (ContextConfig.SignedRequest memory) {
+
+        uint64 nonce;
+        try config.fetchNonce(contextId, userId) returns (uint64 currentNonce) {
+            nonce = currentNonce;
+        } catch {
+            nonce = 1;
+        }
         ContextConfig.ContextRequest memory contextReq = ContextConfig.ContextRequest({
             contextId: contextId,
             kind: kind,
@@ -307,7 +334,7 @@ contract ContextConfigTest is Test {
         ContextConfig.Request memory request = ContextConfig.Request({
             userId: userId,
             signerId: signerId,
-            nonce: uint64(nonce),
+            nonce: nonce,
             kind: ContextConfig.RequestKind.Context,
             data: abi.encode(contextReq)
         });
@@ -344,8 +371,7 @@ contract ContextConfigTest is Test {
             abi.encode(ed25519PublicKey, app),
             ed25519PublicKey,
             ecdsaPublicKey,
-            ecdsaPrivateKey,
-            1
+            ecdsaPrivateKey
         ));
 
         // Check Member1's capabilities
@@ -366,8 +392,7 @@ contract ContextConfigTest is Test {
             abi.encode(newMembers),
             ed25519PublicKey,
             ecdsaPublicKey,
-            ecdsaPrivateKey,
-            2
+            ecdsaPrivateKey
         ));
 
         // Check Member2's capabilities before grant
@@ -380,8 +405,7 @@ contract ContextConfigTest is Test {
             abi.encode(member2Ed25519PublicKey, ContextConfig.Capability.ManageMembers),
             ed25519PublicKey,
             ecdsaPublicKey,
-            ecdsaPrivateKey,
-            3
+            ecdsaPrivateKey
         ));
 
         // Check Member2's capabilities after grant
@@ -397,8 +421,7 @@ contract ContextConfigTest is Test {
             abi.encode(member3Array),
             member2Ed25519PublicKey,
             member2EcdsaPublicKey,
-            member2EcdsaPrivateKey,
-            1 // First operation for Member2
+            member2EcdsaPrivateKey
         ));
 
         // Verify Member3 was added
@@ -419,8 +442,7 @@ contract ContextConfigTest is Test {
             abi.encode(member2Ed25519PublicKey, ContextConfig.Capability.ManageMembers),
             ed25519PublicKey,
             ecdsaPublicKey,
-            ecdsaPrivateKey,
-            4
+            ecdsaPrivateKey
         ));
 
         // Check Member2's capabilities after revoke
@@ -435,8 +457,7 @@ contract ContextConfigTest is Test {
             abi.encode(member3Array),
             member2Ed25519PublicKey,
             member2EcdsaPublicKey,
-            member2EcdsaPrivateKey,
-            2 // Second operation for Member2
+            member2EcdsaPrivateKey
         )) {
             success = true;
         } catch {
@@ -522,19 +543,18 @@ contract ContextConfigTest is Test {
         config.mutate(createSignedRequest(
             contextId,
             ed25519PublicKey,
-            app,
-            1
+            app
         ));
 
-        // Check initial nonce - should be 0 in our implementation, not 1
+        // Check initial nonce - should be 1 after the first operation
         uint64 nonce = config.fetchNonce(contextId, ed25519PublicKey);
-        assertEq(nonce, 0, "Initial nonce should be 0");
+        console.log("nonce: %d", nonce);
+        assertEq(nonce, 1, "Initial nonce should be 1 after context creation");
 
         // Perform an operation and check nonce again
         config.mutate(createAddMembersRequest(
             contextId,
-            new bytes32[](1),
-            2
+            new bytes32[](1)
         ));
 
         uint64 newNonce = config.fetchNonce(contextId, ed25519PublicKey);
@@ -549,8 +569,7 @@ contract ContextConfigTest is Test {
         ContextConfig.SignedRequest memory createRequest = createSignedRequest(
             contextId,
             ed25519PublicKey,
-            app,
-            1
+            app
         );
 
         bool success = config.mutate(createRequest);
@@ -580,8 +599,7 @@ contract ContextConfigTest is Test {
         newMembers[0] = bytes32(uint256(0xbbbb));
         ContextConfig.SignedRequest memory addRequest = createAddMembersRequest(
             contextId,
-            newMembers,
-            2
+            newMembers
         );
         
         success = config.mutate(addRequest);
@@ -601,13 +619,35 @@ contract ContextConfigTest is Test {
             bytes4 expectedSelector = bytes4(keccak256("InvalidNonce()"));
             assertEq(selector, expectedSelector, "Expected InvalidNonce error");
         }
-        
+
         // Try with a lower nonce (should fail with InvalidNonce)
-        ContextConfig.SignedRequest memory lowerNonceRequest = createAddMembersRequest(
-            contextId,
-            newMembers,
-            1 // Lower than current nonce
-        );
+        ContextConfig.ContextRequest memory addMembersRequest = ContextConfig.ContextRequest({
+            contextId: contextId,
+            kind: ContextConfig.ContextRequestKind.AddMembers,
+            data: abi.encode(newMembers)
+        });
+
+        ContextConfig.Request memory request = ContextConfig.Request({
+            signerId: ecdsaPublicKey,
+            userId: ed25519PublicKey,
+            nonce: 0,
+            kind: ContextConfig.RequestKind.Context,
+            data: abi.encode(addMembersRequest)
+        });
+
+        bytes32 messageHash = keccak256(abi.encode(request));
+        bytes32 ethSignedMessageHash = keccak256(abi.encodePacked(
+            "\x19Ethereum Signed Message:\n32",
+            messageHash
+        ));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(ecdsaPrivateKey, ethSignedMessageHash);
+
+        ContextConfig.SignedRequest memory lowerNonceRequest = ContextConfig.SignedRequest({
+            payload: request,
+            r: r,
+            s: s,
+            v: v
+        });
         
         try config.mutate(lowerNonceRequest) {
             fail();
@@ -626,8 +666,7 @@ contract ContextConfigTest is Test {
         // Try with a higher nonce (should succeed)
         ContextConfig.SignedRequest memory higherNonceRequest = createAddMembersRequest(
             contextId,
-            newMembers,
-            3 // Higher nonce
+            newMembers
         );
         success = config.mutate(higherNonceRequest);
         assertTrue(success, "Higher nonce request should succeed");
@@ -641,8 +680,7 @@ contract ContextConfigTest is Test {
         config.mutate(createSignedRequest(
             contextId,
             ed25519PublicKey,
-            app,
-            1
+            app
         ));
 
         // Check initial revisions
@@ -656,8 +694,7 @@ contract ContextConfigTest is Test {
         newMembers[0] = bytes32(uint256(0xbbbb));
         config.mutate(createAddMembersRequest(
             contextId,
-            newMembers,
-            2
+            newMembers
         ));
 
         uint32 newMembersRevision = config.membersRevision(contextId);
@@ -671,8 +708,7 @@ contract ContextConfigTest is Test {
             abi.encode(bytes32(uint256(0xbbbb)), ContextConfig.Capability.ManageApplication),
             ed25519PublicKey,
             ecdsaPublicKey,
-            ecdsaPrivateKey,
-            3
+            ecdsaPrivateKey
         ));
 
         uint32 newAppRevision = config.applicationRevision(contextId);
@@ -688,8 +724,7 @@ contract ContextConfigTest is Test {
         config.mutate(createSignedRequest(
             contextId,
             ed25519PublicKey,
-            app,
-            1
+            app
         ));
 
         // Check if creator is a member
@@ -706,8 +741,7 @@ contract ContextConfigTest is Test {
         newMembers[0] = nonMember;
         config.mutate(createAddMembersRequest(
             contextId,
-            newMembers,
-            2
+            newMembers
         ));
 
         // Check if new member is now a member
@@ -723,8 +757,7 @@ contract ContextConfigTest is Test {
         ContextConfig.SignedRequest memory createRequest = createSignedRequest(
             contextId,
             ed25519PublicKey,
-            app,
-            1
+            app
         );
 
         bool success = config.mutate(createRequest);

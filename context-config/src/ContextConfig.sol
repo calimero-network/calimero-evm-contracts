@@ -190,7 +190,7 @@ contract ContextConfig {
         }
         console.log("passed currentNonce >= request.nonce");
         // Update nonce
-        context.memberNonces[request.userId] = request.nonce;
+        context.memberNonces[request.userId] = request.nonce + 1;
 
         // Handle different request types
         ContextRequestKind kind = contextRequest.kind;
@@ -473,7 +473,7 @@ contract ContextConfig {
         newContext.members = contextMembers;
         newContext.proxyGuard = guard;
         newContext.proxyAddress = proxyAddress;
-        newContext.memberNonces[authorId] = 0;
+        newContext.memberNonces[authorId] = 1;
 
         emit ContextCreated(contextId, authorId);
         return true;
