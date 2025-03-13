@@ -71,6 +71,8 @@ $ forge script script/ContextConfig.s.sol \
     --broadcast
 ```
 
+This will output the contract address which you need to use in next step.
+
 3. Set the proxy code by calling the endpoint on the Context Config contract with the Context Proxy bytecode:
 ```shell
 $ cd context-config
@@ -93,10 +95,6 @@ $ forge test --via-ir --optimize --optimizer-runs 200
 
 # Test Context Proxy
 $ cd ../context-proxy
-$ forge test --via-ir --optimize --optimizer-runs 200
-
-# Test Mock Contract
-$ cd context-proxy/mock
 $ forge test --via-ir --optimize --optimizer-runs 200
 ```
 
