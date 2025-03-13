@@ -14,9 +14,6 @@ contract ContextConfigScript is Script {
 
         // Deploy with just the owner address
         config = new ContextConfig(0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
-        
-        console.log("ContextConfig deployed at:", address(config));
-        console.log("Owner:", 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
 
         vm.stopBroadcast();
     }
