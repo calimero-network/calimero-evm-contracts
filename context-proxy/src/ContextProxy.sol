@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.13;
 
+import "forge-std/console.sol";
 // Interface for the context config contract - simplified
 interface IContextConfig {
     function hasMember(bytes32 contextId, bytes32 userId) external view returns (bool);
@@ -63,8 +64,8 @@ contract ContextProxy {
     }
 
     // State variables
-    bytes32 public contextId;
-    address public contextConfigId;
+    bytes32 public immutable contextId;
+    address public immutable contextConfigId;
     uint32 public numApprovals;
     mapping(bytes32 => Proposal) public proposals;
     mapping(bytes32 => bytes32[]) public approvals;
@@ -72,6 +73,7 @@ contract ContextProxy {
     uint32 public activeProposalsLimit;
     mapping(bytes => bytes) public contextStorage;
     bytes[] private contextStorageKeys;
+    bytes32[] private allProposalIds;
 
     // Events
     event ProposalCreated(bytes32 indexed proposalId, bytes32 authorId);
@@ -117,6 +119,8 @@ contract ContextProxy {
     function mutate(
         SignedRequest calldata signedRequest
     ) external returns (ProposalWithApprovals memory) {
+
+        console.log("mutate");
         // Verify signature and authorization
         bytes32 messageHash = keccak256(abi.encode(signedRequest.payload));
         
@@ -136,14 +140,19 @@ contract ContextProxy {
             revert InvalidSignature();
         }
 
+        console.log("signer");
+
         // Check if user is a member
         if (!isMember(signedRequest.payload.userId)) {
             revert Unauthorized();
         }
 
+        console.log("isMember");
+
         // Process based on request kind
         if (signedRequest.payload.kind == RequestKind.Propose) {
             Proposal memory proposal = abi.decode(signedRequest.payload.data, (Proposal));
+            console.log("decoded proposal");
             return internalCreateProposal(proposal);
         } else if (signedRequest.payload.kind == RequestKind.Approve) {
             ProposalApprovalWithSigner memory approval = abi.decode(signedRequest.payload.data, (ProposalApprovalWithSigner));
@@ -186,6 +195,9 @@ contract ContextProxy {
             }
         }
 
+        console.log("proposal.actions.length");
+        console.log(proposal.actions.length);
+
         // Check proposal limit
         uint32 authorProposalCount = numProposalsPk[proposal.authorId];
         if (authorProposalCount >= activeProposalsLimit) {
@@ -209,6 +221,9 @@ contract ContextProxy {
         }
         
         numProposalsPk[proposal.authorId] = authorProposalCount + 1;
+        
+        // Add to the list of all proposal IDs
+        allProposalIds.push(proposalId);
 
         emit ProposalCreated(proposalId, proposal.authorId);
 
@@ -229,9 +244,6 @@ contract ContextProxy {
     function internalApproveProposal(
         ProposalApprovalWithSigner memory approval
     ) internal returns (ProposalWithApprovals memory) {
-        if (!isMember(approval.userId)) {
-            revert Unauthorized();
-        }
 
         bytes32 proposalId = approval.proposalId;
         Proposal storage proposal = proposals[proposalId];
@@ -275,6 +287,10 @@ contract ContextProxy {
      * @return Whether the user is a member
      */
     function isMember(bytes32 userId) internal view returns (bool) {
+        console.log("isMember");
+        console.logBytes32(userId);
+        console.logBytes32(contextId);
+        console.logAddress(contextConfigId);
         return IContextConfig(contextConfigId).hasMember(contextId, userId);
     }
 
@@ -327,6 +343,16 @@ contract ContextProxy {
             // Update author count
             if (numProposalsPk[authorId] > 0) {
                 numProposalsPk[authorId]--;
+            }
+            
+            // Remove from allProposalIds array
+            for (uint i = 0; i < allProposalIds.length; i++) {
+                if (allProposalIds[i] == proposalId) {
+                    // Replace with the last element and pop
+                    allProposalIds[i] = allProposalIds[allProposalIds.length - 1];
+                    allProposalIds.pop();
+                    break;
+                }
             }
             
             emit ProposalDeleted(proposalId);
@@ -437,36 +463,32 @@ contract ContextProxy {
     }
 
     /**
-     * @dev Returns a paginated list of active proposals with gas optimization
+     * @dev Returns a paginated list of active proposals
      */
     function getProposals(uint32 fromIndex, uint32 limit) external view returns (Proposal[] memory) {
-        // Count total proposals with a fixed upper bound
-        uint32 totalProposals = 0;
-        bytes32[] memory proposalIds = new bytes32[](100); // Fixed size temporary array
-        
-        unchecked {
-            for (uint i = 0; i < 100 && totalProposals < 100; i++) {
-                bytes32 proposalId = keccak256(abi.encodePacked(i));
-                if (proposals[proposalId].id == proposalId) {
-                    proposalIds[totalProposals++] = proposalId;
-                }
-            }
-        }
-        
-        // Apply pagination
+        // Calculate result size based on available proposals and pagination
         uint32 resultSize = 0;
-        if (fromIndex < totalProposals) {
-            resultSize = (totalProposals - fromIndex) < limit ? (totalProposals - fromIndex) : limit;
+        if (fromIndex < allProposalIds.length) {
+            resultSize = (uint32(allProposalIds.length) - fromIndex) < limit ? 
+                        (uint32(allProposalIds.length) - fromIndex) : limit;
         }
         
         Proposal[] memory result = new Proposal[](resultSize);
-        unchecked {
-            for (uint32 i = 0; i < resultSize; i++) {
-                result[i] = proposals[proposalIds[fromIndex + i]];
-            }
+        
+        // Fill array with paginated results
+        for (uint32 i = 0; i < resultSize; i++) {
+            bytes32 proposalId = allProposalIds[fromIndex + i];
+            result[i] = proposals[proposalId];
         }
         
         return result;
+    }
+
+    /**
+     * @dev Returns the total number of active proposals
+     */
+    function getProposalCount() external view returns (uint256) {
+        return allProposalIds.length;
     }
 
     /**
@@ -591,36 +613,36 @@ contract ContextProxy {
         _setImplementation(implementation);
     }
 
-    /**
-     * @dev Fallback function that delegates calls to the implementation
-     */
-    fallback() external payable {
-        address implementation = _getImplementation();
-        require(implementation != address(0), "Implementation not set");
+    // /**
+    //  * @dev Fallback function that delegates calls to the implementation
+    //  */
+    // fallback() external payable {
+    //     address implementation = _getImplementation();
+    //     require(implementation != address(0), "Implementation not set");
 
-        assembly {
-            // Copy msg.data. We take full control of memory in this inline assembly
-            // block because it will not return to Solidity code. We overwrite the
-            // Solidity scratch pad at memory position 0.
-            calldatacopy(0, 0, calldatasize())
+    //     assembly {
+    //         // Copy msg.data. We take full control of memory in this inline assembly
+    //         // block because it will not return to Solidity code. We overwrite the
+    //         // Solidity scratch pad at memory position 0.
+    //         calldatacopy(0, 0, calldatasize())
 
-            // Call the implementation.
-            // out and outsize are 0 because we don't know the size yet.
-            let result := delegatecall(gas(), implementation, 0, calldatasize(), 0, 0)
+    //         // Call the implementation.
+    //         // out and outsize are 0 because we don't know the size yet.
+    //         let result := delegatecall(gas(), implementation, 0, calldatasize(), 0, 0)
 
-            // Copy the returned data.
-            returndatacopy(0, 0, returndatasize())
+    //         // Copy the returned data.
+    //         returndatacopy(0, 0, returndatasize())
 
-            switch result
-            // delegatecall returns 0 on error.
-            case 0 {
-                revert(0, returndatasize())
-            }
-            default {
-                return(0, returndatasize())
-            }
-        }
-    }
+    //         switch result
+    //         // delegatecall returns 0 on error.
+    //         case 0 {
+    //             revert(0, returndatasize())
+    //         }
+    //         default {
+    //             return(0, returndatasize())
+    //         }
+    //     }
+    // }
 
     /**
      * @dev Receive function to accept ETH
