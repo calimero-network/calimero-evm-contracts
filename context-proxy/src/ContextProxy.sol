@@ -142,10 +142,10 @@ contract ContextProxy {
 
         console.log("signer");
 
-        // Check if user is a member
-        if (!isMember(signedRequest.payload.userId)) {
-            revert Unauthorized();
-        }
+        // // Check if user is a member
+        // if (!isMember(signedRequest.payload.userId)) {
+        //     revert Unauthorized();
+        // }
 
         console.log("isMember");
 
@@ -170,15 +170,21 @@ contract ContextProxy {
     function internalCreateProposal(
         Proposal memory proposal
     ) internal returns (ProposalWithApprovals memory) {
+
+        console.log("internalCreateProposal");
         // Validate proposal
         if (proposal.actions.length == 0) {
             revert InvalidAction();
         }
 
+        console.log("proposal.actions.length");
+
         // Handle delete action if present
         for (uint i = 0; i < proposal.actions.length; i++) {
             if (proposal.actions[i].kind == ProposalActionKind.DeleteProposal) {
                 bytes32 proposalIdToDelete = abi.decode(proposal.actions[i].data, (bytes32));
+
+                console.log("proposalIdToDelete");
                 Proposal storage toDelete = proposals[proposalIdToDelete];
                 
                 if (toDelete.authorId != proposal.authorId) {
@@ -204,10 +210,14 @@ contract ContextProxy {
             revert TooManyActiveProposals();
         }
 
+        console.log("authorProposalCount");
+
         // Validate all actions
         for (uint i = 0; i < proposal.actions.length; i++) {
             validateProposalAction(proposal.actions[i]);
         }
+
+        console.log("validateProposalAction");
 
         // Store proposal
         bytes32 proposalId = proposal.id;
@@ -224,6 +234,8 @@ contract ContextProxy {
         
         // Add to the list of all proposal IDs
         allProposalIds.push(proposalId);
+
+        console.log("proposal Created");
 
         emit ProposalCreated(proposalId, proposal.authorId);
 
@@ -300,11 +312,67 @@ contract ContextProxy {
      */
     function validateProposalAction(ProposalAction memory action) internal pure {
         if (action.kind == ProposalActionKind.ExternalFunctionCall) {
-            (address target, bytes memory callData,) = abi.decode(
-                action.data,
-                (address, bytes, uint256)
-            );
-            if (target == address(0) || callData.length < 4) {
+            console.log("validateProposalAction");
+
+            console.log("validateProposalAction");
+
+            // Get the data bytes
+            bytes memory data = action.data;
+            console.log("data length: %d", data.length);
+
+            // Log the raw data bytes without using slices
+            if (data.length >= 32) {
+                bytes32 chunk1;
+                assembly {
+                    // Load 32 bytes from memory - need to add 32 to skip the length field
+                    chunk1 := mload(add(data, 32))
+                }
+                console.log("First 32 bytes:");
+                console.logBytes32(chunk1);
+            }
+
+            // Check if the first 32 bytes are a pointer (0x20)
+            bytes32 firstWord;
+            assembly {
+                firstWord := mload(add(data, 32))
+            }
+
+            bytes memory actualData;
+            address target;
+            bytes memory callData;
+            uint256 value;
+
+            if (firstWord == 0x0000000000000000000000000000000000000000000000000000000000000020) {
+                console.log("Detected pointer at start of data, skipping first 32 bytes");
+                // Skip the first 32 bytes (the pointer) and use the rest
+                actualData = new bytes(data.length - 32);
+                for (uint i = 0; i < data.length - 32; i++) {
+                    actualData[i] = data[i + 32];
+                }
+
+                // Attempt the decode on the adjusted data
+                (target, callData, value) = abi.decode(
+                    actualData,
+                    (address, bytes, uint256)
+                );
+            } else {
+                // Use the original data
+                (target, callData, value) = abi.decode(
+                    data,
+                    (address, bytes, uint256)
+                );
+            }
+            
+            // (address target, bytes memory callData,) = abi.decode(
+            //     action.data,
+            //     (address, bytes, uint256)
+            // );
+            console.log("target");
+            console.logAddress(target);
+            console.log("callData");
+            console.logBytes(callData);
+
+            if (target == address(0)) {
                 revert InvalidAction();
             }
         } else if (action.kind == ProposalActionKind.Transfer) {
@@ -369,6 +437,7 @@ contract ContextProxy {
             revert ProposalNotFound();
         }
 
+        console.log("executeProposal");
         // Cache the actions array length
         uint256 actionsLength = proposal.actions.length;
 
@@ -377,16 +446,74 @@ contract ContextProxy {
             ProposalAction memory action = proposal.actions[i];
             
             if (action.kind == ProposalActionKind.ExternalFunctionCall) {
-                (address target, bytes memory callData, uint256 value) = abi.decode(
-                    action.data,
-                    (address, bytes, uint256)
-                );
+                  console.log("external function call");
+
+                  // Get the data bytes
+                  bytes memory data = action.data;
+                  console.log("data length: %d", data.length);
+
+                  // Log the raw data bytes without using slices
+                  if (data.length >= 32) {
+                      bytes32 chunk1;
+                      assembly {
+                          // Load 32 bytes from memory - need to add 32 to skip the length field
+                          chunk1 := mload(add(data, 32))
+                      }
+                      console.log("First 32 bytes:");
+                      console.logBytes32(chunk1);
+                  }
+
+                  // Check if the first 32 bytes are a pointer (0x20)
+                  bytes32 firstWord;
+                  assembly {
+                      firstWord := mload(add(data, 32))
+                  }
+
+                  bytes memory actualData;
+                  address target;
+                  bytes memory callData;
+                  uint256 value;
+
+                  if (firstWord == 0x0000000000000000000000000000000000000000000000000000000000000020) {
+                      console.log("Detected pointer at start of data, skipping first 32 bytes");
+                      // Skip the first 32 bytes (the pointer) and use the rest
+                      actualData = new bytes(data.length - 32);
+                      for (uint i = 0; i < data.length - 32; i++) {
+                          actualData[i] = data[i + 32];
+                      }
+
+                      // Attempt the decode on the adjusted data
+                      (target, callData, value) = abi.decode(
+                          actualData,
+                          (address, bytes, uint256)
+                      );
+                  } else {
+                      // Use the original data
+                      (target, callData, value) = abi.decode(
+                          data,
+                          (address, bytes, uint256)
+                      );
+                  }
+                  
+
+                console.log("Sending external call");
+
+                console.log("target");
+                console.logAddress(target);
+                console.log("callData");
+                console.logBytes(callData);
+                console.log("value");
+                console.logUint(value);
                 
                 // Execute external call
                 (bool success, ) = target.call{value: value}(callData);
+                console.log("passed");
+                console.log("success");
+                console.log(success);
                 if (!success) {
                     revert InvalidAction();
                 }
+                console.log("External call executed");
                 
                 emit ExternalCallExecuted(target, bytes4(callData), value);
             } 

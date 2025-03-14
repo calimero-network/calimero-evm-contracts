@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.13;
 
+import "forge-std/console.sol";
+
 contract MockExternalContract {
     mapping(string => string) private values;
     uint256 public totalDeposits;
@@ -11,14 +13,18 @@ contract MockExternalContract {
         totalDeposits += msg.value;
     }
     
-    // Function that doesn't accept ETH
     function setValueNoDeposit(string memory key, string memory value) external {
+        console.log("Setting value for key:", key);
+        console.log("Value being set:", value);
         values[key] = value;
+        console.log("Value after setting:", values[key]);
     }
-    
-    // Getter function
+
     function getValue(string memory key) external view returns (string memory) {
-        return values[key];
+        console.log("Getting value for key:", key);
+        string memory result = values[key];
+        console.log("Retrieved value:", result);
+        return result;
     }
     
     // Function to receive ETH
